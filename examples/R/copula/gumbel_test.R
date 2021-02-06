@@ -11,7 +11,7 @@
 library(cmdstanr)
 library(copula)
 
-fp <- file.path("./tests/functions/copula/gumbel_copula_test.stan")
+fp <- file.path("./examples/stan/copula/gumbel_copula_test.stan")
 mod <- cmdstan_model(fp, include_paths = "./functions/copula")
 
 G3 <- gumbelCopula(1.37, dim=2)
