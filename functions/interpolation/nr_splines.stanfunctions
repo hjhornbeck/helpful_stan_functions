@@ -1,0 +1,291 @@
+/** @addtogroup splines Numerical Recipes-inspired cubic spline interpolation.
+*
+* Numerical Recipes-inspired Cubic Splines
+* 
+* "Fast Cubic..."
+* 
+* "Excess Deaths..."
+* @include \interpolation\nr_splines.stanfunctions
+* 
+* \ingroup interpolation
+*  @{ */
+
+  /**
+   * @copyright Haysn Hornbeck
+   * Fast cubic spline interpolator, based on https://arxiv.org/abs/2001.09253 .
+   *  Retains the original's CC0 license.
+   * 
+   * @param x    The value to interpolate; typically, a <= x <= b.
+   * @param a    The lower knot we are interpolating between.
+   * @param b    The upper knot. Note: b MUST be greater than a!
+   * @param u    The value corresponding to the lower knot.
+   * @param v    The value for the upper knot.
+   * @param upp  The second derivative at the lower knot.
+   * @param vpp  The second derivative at the upper.
+   * @return     The interpolated value at x.
+   **/
+  real nr__newint( real x, real a, real b, real u, real v, real upp, real vpp ) {
+
+/*    if( b <= a )
+        reject( "The upper knot, ", b, ", must be greater than or equal to the lower one, ", a, "." );
+*/
+    real ba         = b - a;
+    real xa         = x - a;
+//    real inv_ba     = 1. / ba;             // faster on other architectures
+    real bx         = b - x;
+    real ba2        = ba * ba;
+    
+    real low        = xa*v + bx*u;
+    real C          = (xa*xa - ba2)*xa*vpp;
+    real D          = (bx*bx - ba2)*bx*upp;
+
+    // return ( low + ( C + D )*(1./6.) ) * inv_ba;   // faster on other architectures
+    return ( low + ( C + D )*(1./6.) ) / ba;   // faster on modern Intel CPUs
+    }
+
+  /**
+   * @copyright Haysn Hornbeck
+   * Interpolate the cubic spline at the given values. Depends on nr__newint(). CC0.
+   *
+   * @param X      A vector containing the places to interpolate at.
+   * @param knots  A vector containing the knots of the cubic spline.
+   * @param values A vector containing the values associated with the above.
+   * @param secder A vector containing the second derivatives associated with the above.
+   * @return       A vector containing the interpolated values.
+   **/
+  vector nr__interpolate( vector X, vector knots, vector values, vector secder ) {
+
+    int M = size(X);    // create the return
+    vector[M] retVal;
+    int N = size(knots);
+
+    int right = 2;        // right-most knot index
+    for( j in 1:M ) {
+                // move to the right, if necessary
+        while( (knots[right] < X[j]) && (right < N)  ) { right += 1; }
+
+        retVal[j] = nr__newint( X[j], knots[right-1], knots[right], 
+            values[right-1], values[right],
+            secder[right-1], secder[right] );
+        }
+
+    return retVal;
+    }
+
+
+  /**
+   * @copyright Haysn Hornbeck
+   * Second-derivative generator, based on https://arxiv.org/abs/2001.09253 .
+   *  Retains the original's CC0 license.
+   *
+   * @param knots        The knots we're calculating second derivatives for, as an ordered vector.
+   * @param values       The values associated with the above.
+   * @param start_deriv  The derivative at the start of the spline.
+   * @param end_deriv    The derivative at the end. Slopes > 1e31 imply natural splines.
+   * @return             A vector of second-derivatives at each knot point.
+   **/
+  vector nr__new_second_derivative( vector knots, vector values, real start_deriv, real end_deriv ) {
+
+    int n  = size(knots);
+
+    vector[n] c_p;
+    vector[n] ypp;
+
+    // recycle these values in later routines
+    real new_x        = knots[2];
+    real new_y        = values[2];
+    real cj           = knots[2] - knots[1];
+    real new_dj       = (values[2] - values[1]) / cj;
+    
+    // initialize the forward substitution
+    if ( start_deriv > .99e30 ) {
+
+        c_p[1] = 0.;
+        ypp[1] = 0.;
+        }
+     else {
+
+        c_p[1] = 0.5;
+        ypp[1] = 3. * (new_dj - start_deriv) / cj;
+        }
+     
+    // forward substitution portion
+    int j = 2;
+    while ( j < n ) {
+        
+        // shuffle new values to old
+        real old_x    = new_x;
+        real old_y    = new_y;
+        
+        real aj       = cj;
+        real old_dj   = new_dj;
+        
+        // generate new quantities
+        new_x = knots[j+1];
+        new_y = values[j+1];
+        
+        cj             = new_x - old_x;
+        new_dj         = (new_y - old_y) / cj;
+        real bj        = 2.*(cj + aj);
+        real inv_denom = 1. / (bj - aj*c_p[j-1]);
+        real dj        = 6.*(new_dj - old_dj);
+        
+        ypp[j] = (dj - aj*ypp[j-1]) * inv_denom;
+        c_p[j] = cj * inv_denom;
+        j += 1;
+        
+        }
+
+    // handle the end derivative
+    if ( end_deriv > .99e30 ) {
+
+        c_p[n] = 0.;
+        ypp[n] = 0.;
+        }
+    else {
+
+        real old_x = new_x;
+        real old_y = new_y;
+        
+        real aj       = cj;
+        real old_dj   = new_dj;
+    
+        cj             = 0.;    // this has the same effect as skipping c_n
+        new_dj         = end_deriv;
+        real bj        = 2.*(cj + aj);
+        real inv_denom = 1. / (bj - aj*c_p[j-1]);
+        real dj        = 6.*(new_dj - old_dj);
+        
+        ypp[n] = (dj - aj*ypp[j-1]) * inv_denom;
+        c_p[n] = cj * inv_denom;
+        }
+
+    // as we're storing d_j in y''_j, y''_n = d_n is a no-op
+    
+    // backward substitution portion
+    while ( j > 1 ) {
+
+        j -= 1;
+        ypp[j]  -= c_p[j]*ypp[j+1];
+        }
+        
+    return ypp;
+  }
+
+
+  /**
+   * @copyright Haysn Hornbeck
+   * The derivative of the spline at the lower knot. Useful when trying to avoid
+   *  the use of nr__new_second_derivative(). CC0.
+   * 
+   * @param xj0    The lower knot of the span.
+   * @param xj1    The upper knot.
+   * @param yj0    The lower value of the span.
+   * @param yj1    The upper value.
+   * @param yppj0  The lower second derivative of the span.
+   * @param yppj1  The upper second derivative.
+   * @return       The slope at the lower knot.
+   **/
+  real nr__cubic_spline_lower_slope( real xj0, real xj1, real yj0, real yj1, real yppj0, real yppj1 ) {
+  
+/*    if( xj1 <= xj0 )
+        reject( "The upper knot, ", xj1, ", must be greater than the lower one, ", xj0, "." );
+*/    
+    real delta_x = xj1 - xj0;
+    real delta_y = yj1 - yj1;
+    return ( delta_y/delta_x - (yppj1 + 2*yppj0)*delta_x*(1./6.) );
+    }
+
+  /**
+   * @copyright Haysn Hornbeck
+   * The derivative of the spline at the upper knot. Useful when trying to avoid
+   *  the use of nr__new_second_derivative(). CC0.
+   * 
+   * @param xj0    The lower knot of the span.
+   * @param xj1    The upper knot.
+   * @param yj0    The lower value of the span.
+   * @param yj1    The upper value.
+   * @param yppj0  The lower second derivative of the span.
+   * @param yppj1  The upper second derivative.
+   * @return       The slope at the upper knot.
+   **/
+  real nr__cubic_spline_upper_slope( real xj0, real xj1, real yj0, real yj1, real yppj0, real yppj1 ) {
+  
+/*    if( xj1 <= xj0 )
+        reject( "The upper knot, ", xj1, ", must be greater than the lower one, ", xj0, "." );
+*/    
+    real delta_x = xj1 - xj0;
+    real delta_y = yj1 - yj1;
+    return ( (2*yppj1 + yppj0)*delta_x*(1./6.) - delta_y/delta_x );
+    }
+
+  /**
+   * @copyright Haysn Hornbeck
+   * The full integral between two knots of an interpolating cubic spline.
+   *  This second revision uses affine transformations to simplify the math. It
+   *  should be a bit faster, as a result. CC0.
+   * 
+   * @param xj0    The lower knot to interpolate between.
+   * @param xj1    The upper knot.
+   * @param yj0    The lower value to interpolate between.
+   * @param yj1    The upper value.
+   * @param yppj0  The lower second derivative to interpolate between.
+   * @param yppj1  The upper second derivative.
+   * @return       The value of the integral between those knots.
+   **/
+  real nr__cubic_spline_integral_full2( real xj0, real xj1, real yj0, real yj1, real yppj0, real yppj1 ) {
+  
+    if( xj1 <= xj0 )
+        reject( "The upper knot, ", xj1, ", must be greater than the lower one, ", xj0, "." );
+    
+    real s = xj1 - xj0;
+    real inv_s = 1. / s;
+    real hat_yj1 = (yj1 - yj0) * inv_s;
+
+    real trans = 0.5*( hat_yj1 - s*(yppj1 + yppj0)*(1./12.) );
+    return (trans*s + yj0)*s;
+    }
+
+  /**
+   * @copyright Haysn Hornbeck
+   * The partial integral between two knots of an interpolating cubic spline.
+   *  This third version uses scaling and translation to simplify the math.
+   *  It should be no less numerically stable than version 2. CC0.
+   * 
+   * @param x      The upper bound of the integral. Must be between xj0 and xj1.
+   * @param xj0    The lower knot to interpolate between.
+   * @param xj1    The upper knot.
+   * @param yj0    The lower value to interpolate between.
+   * @param yj1    The upper value.
+   * @param yppj0  The lower second derivative to interpolate between.
+   * @param yppj1  The upper second derivative.
+   * @return       The value of the partial integral between those knots.
+   **/
+  real nr__cubic_spline_integral_partial3( real x, real xj0, real xj1, 
+        real yj0, real yj1, real yppj0, real yppj1 ) {
+
+    if( xj1 <= xj0 )
+        reject( "The upper knot, ", xj1, ", must be greater than the lower one, ", xj0, "." );
+    
+    if( x == xj0 )  // handle a corner case early
+        return 0.;
+    if( x < xj0 )
+        reject( "The integral bound, ", x, ", must be greater than or equal to the lower knot, ", xj0, "." );
+
+    real s = xj1 - xj0;
+    real delta_y = yj1 - yj0;
+    real inv_s = 1. / s;
+    real delta_x = x - xj0;
+    real hat_yppj0 = yppj0 * s;
+    real hat_yppj1 = yppj1 * s;
+    real hat_x = delta_x * inv_s;
+    real hat_yj1 = delta_y * inv_s;
+    real hat_x2 = hat_x * hat_x;
+
+    real trans = hat_x2*( 2.*( 2.*hat_yppj0*(hat_x - 1.) - hat_yppj1 + 6.*hat_yj1 ) +
+                 hat_x2*(hat_yppj1 - hat_yppj0) ) / 24.;
+
+    return trans*s*s + yj0*delta_x;
+    }
+
+/** @} */
