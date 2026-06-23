@@ -1,14 +1,14 @@
 /** @addtogroup splines Numerical Recipes-inspired cubic spline interpolation.
 *
-* Numerical Recipes-inspired Cubic Splines
+* Numerical Recipes-inspired Cubic Splines.
 * 
 * Hornbeck, Haysn. Fast Cubic Spline Interpolation. Jan. 2020. arxiv.org, https://arxiv.org/abs/2001.09253v1.
 * 
 * Hornbeck, H., et al. "Excess Deaths in Canada, from 2010 to 2023". 2026. https://doi.org/10.17605/OSF.IO/F2VMY
 *
 *
-* @include \interpolation\nr_splines.stanfunctions
-* 
+* (source code omitted, due to its length)
+*
 * \ingroup interpolation
 *  @{ */
 
